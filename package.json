@@ -1,0 +1,11 @@
+{
+  "name": "tcp-forward",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test index.test.js"
+  },
+  "author": "",
+  "license": "ISC"
+}
