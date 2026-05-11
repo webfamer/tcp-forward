@@ -4,7 +4,7 @@ const net = require("net");
 const path = require("path");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
-const LISTEN_PORT = 7777;
+const LISTEN_PORT = process.env.LISTEN_PORT;
 const STATIC_FILES = {
   "/": { filePath: path.join(PUBLIC_DIR, "index.html"), contentType: "text/html; charset=utf-8" },
   "/admin.css": { filePath: path.join(PUBLIC_DIR, "admin.css"), contentType: "text/css; charset=utf-8" },
