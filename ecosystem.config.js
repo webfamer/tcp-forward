@@ -9,16 +9,6 @@ module.exports = {
         ADMIN_HOST: "0.0.0.0",
         ADMIN_PORT: "3010",
       },
-    },
-    {
-      name: "tcp-forward-epo",
-      script: "index.js",
-      interpreter: "node",
-      env: {
-        LISTEN_HOST: "7213",
-        ADMIN_HOST: "0.0.0.0",
-        ADMIN_PORT: "3011",
-      },
-    },
+    }
   ],
 };
