@@ -4,6 +4,7 @@ const net = require("net");
 const path = require("path");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
+const DEFAULT_LOG_PATH = path.join(PUBLIC_DIR, "static.txt");
 const STATIC_FILES = {
   "/": { filePath: path.join(PUBLIC_DIR, "index.html"), contentType: "text/html; charset=utf-8" },
   "/admin.css": { filePath: path.join(PUBLIC_DIR, "admin.css"), contentType: "text/css; charset=utf-8" },
@@ -12,6 +13,7 @@ const STATIC_FILES = {
     contentType: "application/javascript; charset=utf-8",
   },
 };
+const LOG_PREVIEW_ROUTES = new Set(["/static.txt", "/staic.txt"]);
 
 function parseInteger(value, fieldName, { min, max }) {
   const parsed = Number.parseInt(value, 10);
@@ -106,11 +108,8 @@ function readStartupConfig() {
       max: 65535,
     }),
     configPath,
+    logPath: process.env.LOG_PATH || DEFAULT_LOG_PATH,
   };
-}
-
-function createDefaultTargets(baseConfig) {
-  return [`${baseConfig.targetHost}:${baseConfig.targetPort}`];
 }
 
 function loadSavedTargets(configPath, fallbackTargets) {
@@ -150,6 +149,40 @@ function saveTargetsConfig(configPath, targets) {
 
 function formatSocket(socket) {
   return `${socket.remoteAddress || "unknown"}:${socket.remotePort || "unknown"}`;
+}
+
+function formatBeijingTimestamp(date = new Date()) {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Shanghai",
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+    .format(date)
+    .replace(" ", "T");
+}
+
+function formatChunkForLog(chunk) {
+  const utf8 = chunk.toString("utf8");
+  const sanitizedUtf8 = utf8.replace(/\r/g, "\\r").replace(/\n/g, "\\n");
+  const looksBinary =
+    utf8.includes("\uFFFD") ||
+    /[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(utf8);
+
+  return {
+    bytes: chunk.length,
+    utf8: looksBinary ? "[binary data]" : sanitizedUtf8,
+    hex: chunk.toString("hex"),
+  };
+}
+
+function appendForwardLog(logPath, message) {
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.appendFileSync(logPath, `${message}\n`, "utf8");
 }
 
 function readRequestBody(request) {
@@ -193,15 +226,70 @@ function sendStaticFile(response, filePath, contentType) {
   }
 }
 
-function getAdminMeta(baseConfig, runtimeState) {
-  return {
-    listenHost: baseConfig.listenHost,
-    listenPort: baseConfig.listenPort,
-    adminAddress: `${baseConfig.adminHost}:${baseConfig.adminPort}`,
-    connectTimeoutMs: baseConfig.connectTimeoutMs,
-    configPath: baseConfig.configPath,
-    targetCount: runtimeState.targets.length,
-  };
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function sendLogPreview(response, logPath) {
+  try {
+    const content = fs.readFileSync(logPath, "utf8");
+    const escapedContent = escapeHtml(content);
+    const html = `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TCP Forward Log</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: Menlo, Monaco, Consolas, monospace;
+        background: #f6f8fb;
+        color: #1f2937;
+      }
+      h1 {
+        margin: 0 0 12px;
+        font-size: 20px;
+      }
+      p {
+        margin: 0 0 16px;
+        color: #4b5563;
+      }
+      pre {
+        margin: 0;
+        padding: 16px;
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        border: 1px solid #dbe1ea;
+        border-radius: 12px;
+        background: #ffffff;
+        line-height: 1.5;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>TCP Forward Log</h1>
+    <p>${escapeHtml(logPath)}</p>
+    <pre>${escapedContent || "No log entries yet."}</pre>
+  </body>
+</html>
+`;
+
+    response.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(html);
+  } catch (error) {
+    sendJson(response, 500, { error: `Failed to load log file: ${error.message}` });
+  }
 }
 
 function createProxyServer(runtimeState, baseConfig) {
@@ -265,6 +353,14 @@ function createProxyServer(runtimeState, baseConfig) {
     });
 
     clientSocket.on("data", (chunk) => {
+      const message = formatChunkForLog(chunk);
+      const targetList = activeTargets.map((target) => target.target).join(", ");
+      const logLine =
+        `[${formatBeijingTimestamp()}+08:00] [client-data] ` +
+        `targets=${targetList} ${message.bytes}B utf8="${message.utf8}" hex=${message.hex}`;
+
+      appendForwardLog(baseConfig.logPath || DEFAULT_LOG_PATH, logLine);
+
       activeTargets.forEach((target) => {
         if (!target.socket.destroyed) {
           target.socket.write(chunk);
@@ -335,18 +431,15 @@ function parseConfigPayload(payload) {
   throw new Error("targets is required");
 }
 
-function createConfigResponse(runtimeState, baseConfig) {
-  return {
-    targets: runtimeState.targets,
-    listenPort: baseConfig.listenPort,
-    primaryReplyTarget: runtimeState.targets[0],
-  };
-}
-
 function createAdminServer(runtimeState, baseConfig) {
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || "localhost"}`);
     const staticFile = request.method === "GET" ? STATIC_FILES[url.pathname] : null;
+
+    if (request.method === "GET" && LOG_PREVIEW_ROUTES.has(url.pathname)) {
+      sendLogPreview(response, baseConfig.logPath || DEFAULT_LOG_PATH);
+      return;
+    }
 
     if (staticFile) {
       sendStaticFile(response, staticFile.filePath, staticFile.contentType);
@@ -354,12 +447,27 @@ function createAdminServer(runtimeState, baseConfig) {
     }
 
     if (url.pathname === "/api/meta" && request.method === "GET") {
-      sendJson(response, 200, { meta: getAdminMeta(baseConfig, runtimeState) });
+      sendJson(response, 200, {
+        meta: {
+          listenHost: baseConfig.listenHost,
+          listenPort: baseConfig.listenPort,
+          adminAddress: `${baseConfig.adminHost}:${baseConfig.adminPort}`,
+          connectTimeoutMs: baseConfig.connectTimeoutMs,
+          configPath: baseConfig.configPath,
+          targetCount: runtimeState.targets.length,
+        },
+      });
       return;
     }
 
     if (url.pathname === "/api/config" && request.method === "GET") {
-      sendJson(response, 200, { config: createConfigResponse(runtimeState, baseConfig) });
+      sendJson(response, 200, {
+        config: {
+          targets: runtimeState.targets,
+          listenPort: baseConfig.listenPort,
+          primaryReplyTarget: runtimeState.targets[0],
+        },
+      });
       return;
     }
 
@@ -373,7 +481,13 @@ function createAdminServer(runtimeState, baseConfig) {
         saveTargetsConfig(baseConfig.configPath, runtimeState.targets);
 
         console.log(`[config-updated] ${runtimeState.targets.length} target(s) active`);
-        sendJson(response, 200, { config: createConfigResponse(runtimeState, baseConfig) });
+        sendJson(response, 200, {
+          config: {
+            targets: runtimeState.targets,
+            listenPort: baseConfig.listenPort,
+            primaryReplyTarget: runtimeState.targets[0],
+          },
+        });
       } catch (error) {
         sendJson(response, 400, { error: error.message });
       }
@@ -396,7 +510,7 @@ function shutdownServers(signal, adminServer, proxyServer) {
 
 async function start() {
   const baseConfig = readStartupConfig();
-  const fallbackTargets = createDefaultTargets(baseConfig);
+  const fallbackTargets = [`${baseConfig.targetHost}:${baseConfig.targetPort}`];
   const runtimeState = {
     targets: [],
     parsedTargets: [],
@@ -434,12 +548,14 @@ if (require.main === module) {
 }
 
 module.exports = {
+  appendForwardLog,
   closeServer,
   createAdminServer,
-  createConfigResponse,
-  createDefaultTargets,
   createProxyServer,
-  getAdminMeta,
+  DEFAULT_LOG_PATH,
+  escapeHtml,
+  formatBeijingTimestamp,
+  formatChunkForLog,
   listenServer,
   loadSavedTargets,
   normalizeTargets,
@@ -449,6 +565,7 @@ module.exports = {
   parseTargets,
   readStartupConfig,
   saveTargetsConfig,
+  sendLogPreview,
   shutdownServers,
   start,
   updateTargets,
