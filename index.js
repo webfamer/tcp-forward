@@ -4,7 +4,6 @@ const net = require("net");
 const path = require("path");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
-const LISTEN_PORT = process.env.LISTEN_PORT;
 const STATIC_FILES = {
   "/": { filePath: path.join(PUBLIC_DIR, "index.html"), contentType: "text/html; charset=utf-8" },
   "/admin.css": { filePath: path.join(PUBLIC_DIR, "admin.css"), contentType: "text/css; charset=utf-8" },
@@ -87,7 +86,10 @@ function readStartupConfig() {
 
   return {
     listenHost: process.env.LISTEN_HOST || "0.0.0.0",
-    listenPort: LISTEN_PORT,
+    listenPort: parseInteger(process.env.LISTEN_PORT || "7777", "LISTEN_PORT", {
+      min: 1,
+      max: 65535,
+    }),
     targetHost: process.env.TARGET_HOST || "127.0.0.1",
     targetPort: parseInteger(process.env.TARGET_PORT || "8080", "TARGET_PORT", {
       min: 1,

@@ -11,6 +11,7 @@ const {
   createProxyServer,
   createConfigResponse,
   getAdminMeta,
+  readStartupConfig,
   updateTargets,
 } = require("./index");
 
@@ -172,5 +173,48 @@ test("forwards client data to all targets and replies from the first target", as
   } finally {
     await closeServer(proxyServer);
     await Promise.all(upstreamServers.map((server) => closeServer(server)));
+  }
+});
+
+test("reads listen port from LISTEN_PORT for process managers", () => {
+  const originalEnv = {
+    LISTEN_HOST: process.env.LISTEN_HOST,
+    LISTEN_PORT: process.env.LISTEN_PORT,
+    TARGET_HOST: process.env.TARGET_HOST,
+    TARGET_PORT: process.env.TARGET_PORT,
+    CONNECT_TIMEOUT_MS: process.env.CONNECT_TIMEOUT_MS,
+    ADMIN_HOST: process.env.ADMIN_HOST,
+    ADMIN_PORT: process.env.ADMIN_PORT,
+    CONFIG_PATH: process.env.CONFIG_PATH,
+  };
+
+  process.env.LISTEN_HOST = "0.0.0.0";
+  process.env.LISTEN_PORT = "7777";
+  process.env.TARGET_HOST = "127.0.0.1";
+  process.env.TARGET_PORT = "9001";
+  process.env.CONNECT_TIMEOUT_MS = "5000";
+  process.env.ADMIN_HOST = "0.0.0.0";
+  process.env.ADMIN_PORT = "3010";
+  process.env.CONFIG_PATH = "/tmp/pm2-forwarder-config.json";
+
+  try {
+    const config = readStartupConfig();
+
+    assert.equal(config.listenHost, "0.0.0.0");
+    assert.equal(config.listenPort, 7777);
+    assert.equal(config.targetHost, "127.0.0.1");
+    assert.equal(config.targetPort, 9001);
+    assert.equal(config.connectTimeoutMs, 5000);
+    assert.equal(config.adminHost, "0.0.0.0");
+    assert.equal(config.adminPort, 3010);
+    assert.equal(config.configPath, "/tmp/pm2-forwarder-config.json");
+  } finally {
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (typeof value === "undefined") {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
   }
 });

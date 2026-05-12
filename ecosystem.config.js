@@ -5,7 +5,7 @@ module.exports = {
       script: "index.js",
       interpreter: "node",
       env: {
-        LISTEN_HOST: "7777",
+        LISTEN_PORT: "7777",
         ADMIN_HOST: "0.0.0.0",
         ADMIN_PORT: "3010",
       },
