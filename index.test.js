@@ -10,6 +10,7 @@ const {
   createAdminServer,
   createProxyServer,
   readStartupConfig,
+  updateRoutingConfig,
   updateTargets,
 } = require("./index");
 
@@ -56,9 +57,14 @@ test("serves simplified admin frontend assets", async () => {
     const typoLogResponse = await fetch(`http://127.0.0.1:${port}/staic.txt`);
     const typoLog = await typoLogResponse.text();
 
-    assert.match(page, /固定监听 7777/);
-    assert.match(page, /textarea/);
-    assert.match(script, /split\("\\n"\)/);
+    assert.match(page, /报文转发规则/);
+    assert.match(page, /新增规则/);
+    assert.match(page, /固定设备地址/);
+    assert.match(page, /五路测温传感器/);
+    assert.match(page, /多个用逗号或换行分隔/);
+    assert.match(page, /启用全量转发/);
+    assert.match(script, /createRuleCard/);
+    assert.match(script, /replyPolicy: "none"/);
     assert.match(staticLogResponse.headers.get("content-type") || "", /^text\/html/);
     assert.match(staticLog, /<pre>log line 1\n<\/pre>/);
     assert.match(typoLog, /<pre>log line 1\n<\/pre>/);
@@ -114,14 +120,31 @@ test("reads and writes target list config", async () => {
     });
     assert.equal(initialConfigResponse.status, 200);
     assert.deepEqual(initialConfigPayload.config, {
+      routes: [],
+      defaultRoute: {
+        frameType: "*",
+        deviceAddress: "*",
+        dataType: "*",
+        primary: "127.0.0.1:9001",
+        mirrors: [],
+        replyPolicy: "none",
+      },
       listenPort: 7777,
-      primaryReplyTarget: "127.0.0.1:9001",
+      replyPolicy: "none",
       targets: ["127.0.0.1:9001"],
     });
     assert.equal(response.status, 200);
     assert.deepEqual(payload.config.targets, ["127.0.0.1:9101", "127.0.0.1:9102"]);
     assert.deepEqual(saved, {
-      targets: ["127.0.0.1:9101", "127.0.0.1:9102"],
+      routes: [],
+      defaultRoute: {
+        frameType: "*",
+        deviceAddress: "*",
+        dataType: "*",
+        primary: "127.0.0.1:9101",
+        mirrors: ["127.0.0.1:9102"],
+        replyPolicy: "none",
+      },
     });
   } finally {
     await closeServer(server);
@@ -129,14 +152,14 @@ test("reads and writes target list config", async () => {
   }
 });
 
-test("forwards client data to all targets and replies from the first target", async () => {
+test("routes glued frames by address and drops upstream replies", async () => {
   const received = [[], []];
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-forward-log-test-"));
   const logPath = path.join(tempDir, "static.txt");
   const upstreamServers = [0, 1].map((index) =>
     net.createServer((socket) => {
       socket.on("data", (chunk) => {
-        received[index].push(chunk.toString());
+        received[index].push(Buffer.from(chunk));
 
         if (index === 0) {
           socket.write("pong");
@@ -151,10 +174,22 @@ test("forwards client data to all targets and replies from the first target", as
   }
 
   const runtimeState = {
-    targets: upstreamPorts.map((port) => `127.0.0.1:${port}`),
+    targets: [],
     parsedTargets: [],
   };
-  updateTargets(runtimeState, runtimeState.targets);
+  updateRoutingConfig(runtimeState, {
+    routes: [
+      {
+        frameType: "ECCN",
+        deviceAddress: "1001",
+        dataType: "02",
+        primary: `127.0.0.1:${upstreamPorts[0]}`,
+      },
+    ],
+    defaultRoute: {
+      primary: `127.0.0.1:${upstreamPorts[1]}`,
+    },
+  });
 
   const baseConfig = {
     listenHost: "127.0.0.1",
@@ -169,33 +204,36 @@ test("forwards client data to all targets and replies from the first target", as
   const proxyPort = await listen(proxyServer);
 
   try {
+    const matchedPayload = Buffer.from("4543434e03e902010001000000000000fc", "hex");
+    const defaultPayload = Buffer.from("4543434e03ea02010002000000000000fc", "hex");
     const reply = await new Promise((resolve, reject) => {
       const client = net.createConnection({ host: "127.0.0.1", port: proxyPort });
-      let data = "";
+      const chunks = [];
 
       client.on("connect", () => {
-        client.write("ping");
+        client.write(Buffer.concat([matchedPayload, defaultPayload]));
+        setTimeout(() => client.end(), 50);
       });
       client.on("data", (chunk) => {
-        data += chunk.toString();
-        client.end();
+        chunks.push(chunk);
       });
-      client.on("end", () => resolve(data));
+      client.on("close", () => resolve(Buffer.concat(chunks)));
       client.on("error", reject);
     });
 
-    assert.equal(reply, "pong");
-    assert.deepEqual(received[0], ["ping"]);
-    assert.deepEqual(received[1], ["ping"]);
-    const logLine = fs.readFileSync(logPath, "utf8").trim();
+    assert.equal(reply.length, 0);
+    assert.deepEqual(received[0], [matchedPayload]);
+    assert.deepEqual(received[1], [defaultPayload]);
+    const logContents = fs.readFileSync(logPath, "utf8").trim();
 
-    assert.match(logLine, /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00] \[client-data]/);
+    assert.match(logContents, /^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+08:00] \[client-data]/);
     assert.match(
-      logLine,
+      logContents,
       new RegExp(`targets=127\\.0\\.0\\.1:${upstreamPorts[0]}, 127\\.0\\.0\\.1:${upstreamPorts[1]}`),
     );
-    assert.match(logLine, /utf8="ping"/);
-    assert.match(logLine, /hex=70696e67/);
+    assert.match(logContents, /type=ECCN address=1001 dataType=02/);
+    assert.match(logContents, /type=ECCN address=1002 dataType=02/);
+    assert.match(logContents, /upstream-reply-dropped/);
   } finally {
     await closeServer(proxyServer);
     await Promise.all(upstreamServers.map((server) => closeServer(server)));
@@ -207,7 +245,7 @@ test("logs binary payloads without mojibake utf8 output", async () => {
   const received = [[], []];
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-forward-binary-log-test-"));
   const logPath = path.join(tempDir, "static.txt");
-  const payload = Buffer.from("4543434eea640201000d69805b59", "hex");
+  const payload = Buffer.from("4543434eea640201000d69805b590000fc", "hex");
   const upstreamServers = [0, 1].map((index) =>
     net.createServer((socket) => {
       socket.on("data", (chunk) => {
@@ -246,20 +284,20 @@ test("logs binary payloads without mojibake utf8 output", async () => {
   try {
     const reply = await new Promise((resolve, reject) => {
       const client = net.createConnection({ host: "127.0.0.1", port: proxyPort });
-      let data = "";
+      const chunks = [];
 
       client.on("connect", () => {
         client.write(payload);
+        setTimeout(() => client.end(), 50);
       });
       client.on("data", (chunk) => {
-        data += chunk.toString();
-        client.end();
+        chunks.push(chunk);
       });
-      client.on("end", () => resolve(data));
+      client.on("close", () => resolve(Buffer.concat(chunks)));
       client.on("error", reject);
     });
 
-    assert.equal(reply, "pong");
+    assert.equal(reply.length, 0);
     assert.deepEqual(received[0], [payload]);
     assert.deepEqual(received[1], [payload]);
     const logLine = fs.readFileSync(logPath, "utf8").trim();
@@ -269,7 +307,7 @@ test("logs binary payloads without mojibake utf8 output", async () => {
       new RegExp(`targets=127\\.0\\.0\\.1:${upstreamPorts[0]}, 127\\.0\\.0\\.1:${upstreamPorts[1]}`),
     );
     assert.match(logLine, /utf8="\[binary data]"/);
-    assert.match(logLine, /hex=4543434eea640201000d69805b59/);
+    assert.match(logLine, /hex=4543434eea640201000d69805b590000fc/);
   } finally {
     await closeServer(proxyServer);
     await Promise.all(upstreamServers.map((server) => closeServer(server)));

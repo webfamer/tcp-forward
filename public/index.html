@@ -3,53 +3,161 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TCP Forward</title>
+    <title>TCP 转发控制台</title>
     <link rel="stylesheet" href="/admin.css" />
   </head>
   <body>
-    <main class="page">
-      <section class="card">
-        <p class="eyebrow">TCP Forward</p>
-        <h1>固定监听 7777</h1>
-        <p class="description">
-          一行填一个目标地址，格式是 <code>host:port</code>。收到的消息会转发到所有目标，客户端回包走第一行目标。
-        </p>
+    <main class="shell">
+      <header class="masthead">
+        <div>
+          <p class="eyebrow">TCP ROUTING CONTROL</p>
+          <h1>报文转发规则</h1>
+          <p class="lede">按设备类型和设备地址分流。所有目标仅接收报文，上游回包不会发回设备。</p>
+        </div>
+        <div class="status-cluster" aria-label="服务状态">
+          <span class="live-dot"></span>
+          <span>服务运行中</span>
+        </div>
+      </header>
 
-        <form id="config-form" class="form">
-          <label class="label" for="targets">转发目标</label>
-          <textarea
-            id="targets"
-            name="targets"
-            rows="8"
-            placeholder="127.0.0.1:9001&#10;127.0.0.1:9002"
-          ></textarea>
-
-          <button id="save-button" type="submit" disabled>保存</button>
-          <div id="status" class="status"></div>
-        </form>
-      </section>
-
-      <section class="card info">
-        <h2>运行信息</h2>
-        <div class="info-item">
-          <span>监听地址</span>
+      <section class="telemetry" aria-label="运行信息">
+        <div class="metric">
+          <span>TCP 监听</span>
           <strong id="listen-address">加载中...</strong>
         </div>
-        <div class="info-item">
+        <div class="metric">
           <span>管理页面</span>
           <strong id="admin-address">加载中...</strong>
         </div>
-        <div class="info-item">
-          <span>目标数量</span>
-          <strong id="target-count">加载中...</strong>
+        <div class="metric">
+          <span>上游目标</span>
+          <strong id="target-count">-</strong>
         </div>
-        <div class="info-item">
+        <div class="metric wide">
           <span>配置文件</span>
           <strong id="config-path">加载中...</strong>
         </div>
       </section>
+
+      <form id="config-form">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="section-index">01 / 精确路由</p>
+              <h2>转发规则</h2>
+              <p>一条规则可以填写多个设备地址；固定设备规则优先于全量规则。</p>
+            </div>
+            <button id="add-rule-button" class="button secondary" type="button">
+              <span aria-hidden="true">＋</span> 新增规则
+            </button>
+          </div>
+
+          <div id="rules" class="rules"></div>
+          <div id="empty-rules" class="empty-state" hidden>
+            <strong>还没有精确规则</strong>
+            <span>报文将进入下方默认路由；也可以新增一条按设备或类型分流。</span>
+          </div>
+        </section>
+
+        <section class="panel default-panel">
+          <div class="section-heading compact">
+            <div>
+              <p class="section-index">02 / 兜底处理</p>
+              <h2>未匹配报文</h2>
+            </div>
+            <label class="switch">
+              <input id="default-enabled" type="checkbox" />
+              <span class="switch-track" aria-hidden="true"></span>
+              <span>启用全量转发</span>
+            </label>
+          </div>
+
+          <div id="default-fields" class="destination-grid">
+            <label class="field">
+              <span>主目标 <em>必填</em></span>
+              <input id="default-primary" type="text" placeholder="139.129.23.36:7777" />
+            </label>
+            <label class="field">
+              <span>镜像目标 <small>可选，多个用逗号或换行分隔</small></span>
+              <textarea id="default-mirrors" rows="2" placeholder="10.0.0.12:7777"></textarea>
+            </label>
+          </div>
+          <p id="default-disabled-note" class="disabled-note" hidden>
+            未匹配任何规则的报文将被丢弃，并写入转发日志。
+          </p>
+        </section>
+
+        <div class="action-bar">
+          <div>
+            <strong>回包策略：关闭</strong>
+            <span>所有规则固定为 none</span>
+          </div>
+          <div class="action-buttons">
+            <span id="status" class="status" role="status" aria-live="polite"></span>
+            <button id="save-button" class="button primary" type="submit" disabled>保存并应用</button>
+          </div>
+        </div>
+      </form>
     </main>
 
+    <template id="rule-template">
+      <article class="rule-card">
+        <div class="rule-header">
+          <div>
+            <span class="rule-number"></span>
+            <strong class="rule-title">转发规则</strong>
+          </div>
+          <button class="icon-button remove-rule" type="button" aria-label="删除规则">删除</button>
+        </div>
+
+        <div class="match-grid">
+          <label class="field">
+            <span>设备范围</span>
+            <select class="address-mode">
+              <option value="*">全部设备</option>
+              <option value="fixed">固定设备地址</option>
+            </select>
+          </label>
+          <label class="field address-field">
+            <span>设备地址 <small>十进制，多个用逗号或换行分隔</small></span>
+            <textarea
+              class="device-address"
+              rows="2"
+              inputmode="numeric"
+              placeholder="60003&#10;60004"
+              disabled
+            ></textarea>
+          </label>
+          <label class="field">
+            <span>设备类型</span>
+            <select class="device-type">
+              <option value="all">全部设备类型</option>
+              <option value="host">主机</option>
+              <option value="sensor">局放测温传感器</option>
+              <option value="eccn-host">ECCN 主机</option>
+              <option value="five-road-temp">五路测温传感器</option>
+              <option value="fuse">熔断器</option>
+              <option value="iotd">开关柜局放</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="route-arrow" aria-hidden="true"><span>匹配后转发至</span></div>
+
+        <div class="destination-grid">
+          <label class="field">
+            <span>主目标 <em>必填</em></span>
+            <input class="primary-target" type="text" placeholder="10.0.0.10:7777" />
+          </label>
+          <label class="field">
+            <span>镜像目标 <small>可选，多个用逗号或换行分隔</small></span>
+            <textarea class="mirror-targets" rows="2" placeholder="10.0.0.11:7777"></textarea>
+          </label>
+        </div>
+      </article>
+    </template>
+
+    <script src="/route-form.js"></script>
     <script src="/admin.js"></script>
   </body>
 </html>

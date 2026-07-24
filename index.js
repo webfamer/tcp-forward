@@ -2,6 +2,13 @@ const fs = require("fs");
 const http = require("http");
 const net = require("net");
 const path = require("path");
+const { createFrameRouter } = require("./protocol/frame-router");
+const {
+  listRoutingTargets,
+  matchRoute,
+  normalizeRoutingConfig,
+  routeDestinations,
+} = require("./routing");
 
 const PUBLIC_DIR = path.join(__dirname, "public");
 const DEFAULT_LOG_PATH = path.join(PUBLIC_DIR, "static.txt");
@@ -10,6 +17,10 @@ const STATIC_FILES = {
   "/admin.css": { filePath: path.join(PUBLIC_DIR, "admin.css"), contentType: "text/css; charset=utf-8" },
   "/admin.js": {
     filePath: path.join(PUBLIC_DIR, "admin.js"),
+    contentType: "application/javascript; charset=utf-8",
+  },
+  "/route-form.js": {
+    filePath: path.join(PUBLIC_DIR, "route-form.js"),
     contentType: "application/javascript; charset=utf-8",
   },
 };
@@ -145,6 +156,24 @@ function loadSavedTargets(configPath, fallbackTargets) {
 function saveTargetsConfig(configPath, targets) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, `${JSON.stringify({ targets }, null, 2)}\n`, "utf8");
+}
+
+function loadSavedRoutingConfig(configPath, fallbackTargets) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    return normalizeRoutingConfig(raw, parseTargetString);
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      console.error(`[config-load-error] ${error.message}`);
+    }
+  }
+
+  return normalizeRoutingConfig({ targets: fallbackTargets }, parseTargetString);
+}
+
+function saveRoutingConfig(configPath, routingConfig) {
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(routingConfig, null, 2)}\n`, "utf8");
 }
 
 function formatSocket(socket) {
@@ -294,6 +323,7 @@ function sendLogPreview(response, logPath) {
 
 function createProxyServer(runtimeState, baseConfig) {
   const server = net.createServer((clientSocket) => {
+    const connectionRoutingConfig = runtimeState.routingConfig;
     const activeTargets = runtimeState.parsedTargets.map((target) => ({
       ...target,
       socket: net.createConnection({
@@ -301,7 +331,8 @@ function createProxyServer(runtimeState, baseConfig) {
         port: target.targetPort,
       }),
     }));
-    const primaryTarget = activeTargets[0];
+    const targetsByAddress = new Map(activeTargets.map((target) => [target.target, target]));
+    const frameRouter = createFrameRouter();
     const clientLabel = formatSocket(clientSocket);
     let closed = false;
 
@@ -334,22 +365,30 @@ function createProxyServer(runtimeState, baseConfig) {
     clientSocket.on("close", () => closeAll("client-close"));
 
     activeTargets.forEach((target, index) => {
-      target.socket.on("error", (error) => closeAll(`target-${index + 1}-error`, error));
+      target.socket.on("error", (error) => {
+        console.error(`[target-${index + 1}-error] ${target.target}: ${error.message}`);
+        target.socket.destroy();
+      });
       target.socket.setTimeout(baseConfig.connectTimeoutMs, () => {
-        closeAll(
-          `target-${index + 1}-timeout`,
-          new Error(`connect timeout after ${baseConfig.connectTimeoutMs}ms`),
+        console.error(
+          `[target-${index + 1}-timeout] ${target.target}: ` +
+            `connect timeout after ${baseConfig.connectTimeoutMs}ms`,
         );
+        target.socket.destroy();
       });
       target.socket.on("connect", () => {
         target.socket.setTimeout(0);
       });
       target.socket.on("close", () => {
-        if (index === 0) {
-          closeAll("primary-target-close");
-        }
+        console.log(`[target-${index + 1}-close] ${target.target} for ${clientLabel}`);
       });
-      target.socket.resume();
+      target.socket.on("data", (chunk) => {
+        const message = formatChunkForLog(chunk);
+        const logLine =
+          `[${formatBeijingTimestamp()}+08:00] [upstream-reply-dropped] ` +
+          `target=${target.target} ${message.bytes}B hex=${message.hex}`;
+        appendForwardLog(baseConfig.logPath || DEFAULT_LOG_PATH, logLine);
+      });
     });
 
     clientSocket.on("data", (chunk) => {
@@ -361,17 +400,23 @@ function createProxyServer(runtimeState, baseConfig) {
 
       appendForwardLog(baseConfig.logPath || DEFAULT_LOG_PATH, logLine);
 
-      activeTargets.forEach((target) => {
-        if (!target.socket.destroyed) {
-          target.socket.write(chunk);
-        }
-      });
-    });
+      frameRouter.push(chunk).forEach(({ frame, meta }) => {
+        const route = matchRoute(connectionRoutingConfig, meta);
+        const destinations = routeDestinations(route);
+        const routeLogLine =
+          `[${formatBeijingTimestamp()}+08:00] [frame-route] ` +
+          `type=${meta.frameType} address=${meta.deviceAddress} dataType=${meta.dataType} ` +
+          `targets=${destinations.join(", ") || "[drop]"} ${frame.length}B`;
 
-    primaryTarget.socket.on("data", (chunk) => {
-      if (!clientSocket.destroyed) {
-        clientSocket.write(chunk);
-      }
+        appendForwardLog(baseConfig.logPath || DEFAULT_LOG_PATH, routeLogLine);
+
+        destinations.forEach((targetAddress) => {
+          const target = targetsByAddress.get(targetAddress);
+          if (target && !target.socket.destroyed) {
+            target.socket.write(frame);
+          }
+        });
+      });
     });
   });
 
@@ -415,20 +460,38 @@ function closeServer(server) {
 }
 
 function updateTargets(runtimeState, nextTargets) {
-  runtimeState.targets = normalizeTargets(nextTargets);
-  runtimeState.parsedTargets = parseTargets(runtimeState.targets);
+  updateRoutingConfig(
+    runtimeState,
+    normalizeRoutingConfig({ targets: normalizeTargets(nextTargets) }, parseTargetString),
+  );
+}
+
+function updateRoutingConfig(runtimeState, nextConfig) {
+  const routingConfig = normalizeRoutingConfig(nextConfig, parseTargetString);
+  const targets = listRoutingTargets(routingConfig);
+
+  runtimeState.routingConfig = routingConfig;
+  runtimeState.targets = targets;
+  runtimeState.parsedTargets = parseTargets(targets);
 }
 
 function parseConfigPayload(payload) {
+  if (Array.isArray(payload.routes) || payload.defaultRoute) {
+    return normalizeRoutingConfig(payload, parseTargetString);
+  }
+
   if (Array.isArray(payload.targets)) {
-    return normalizeTargets(payload.targets);
+    return normalizeRoutingConfig({ targets: normalizeTargets(payload.targets) }, parseTargetString);
   }
 
   if (payload.targetHost || payload.targetPort) {
-    return normalizeTargets([`${payload.targetHost}:${payload.targetPort}`]);
+    return normalizeRoutingConfig(
+      { targets: normalizeTargets([`${payload.targetHost}:${payload.targetPort}`]) },
+      parseTargetString,
+    );
   }
 
-  throw new Error("targets is required");
+  throw new Error("routes or targets is required");
 }
 
 function createAdminServer(runtimeState, baseConfig) {
@@ -463,9 +526,10 @@ function createAdminServer(runtimeState, baseConfig) {
     if (url.pathname === "/api/config" && request.method === "GET") {
       sendJson(response, 200, {
         config: {
+          ...runtimeState.routingConfig,
           targets: runtimeState.targets,
           listenPort: baseConfig.listenPort,
-          primaryReplyTarget: runtimeState.targets[0],
+          replyPolicy: "none",
         },
       });
       return;
@@ -475,17 +539,21 @@ function createAdminServer(runtimeState, baseConfig) {
       try {
         const body = await readRequestBody(request);
         const payload = JSON.parse(body || "{}");
-        const nextTargets = parseConfigPayload(payload);
+        const nextConfig = parseConfigPayload(payload);
 
-        updateTargets(runtimeState, nextTargets);
-        saveTargetsConfig(baseConfig.configPath, runtimeState.targets);
+        updateRoutingConfig(runtimeState, nextConfig);
+        saveRoutingConfig(baseConfig.configPath, runtimeState.routingConfig);
 
-        console.log(`[config-updated] ${runtimeState.targets.length} target(s) active`);
+        console.log(
+          `[config-updated] ${runtimeState.routingConfig.routes.length} route(s), ` +
+            `${runtimeState.targets.length} target(s) active`,
+        );
         sendJson(response, 200, {
           config: {
+            ...runtimeState.routingConfig,
             targets: runtimeState.targets,
             listenPort: baseConfig.listenPort,
-            primaryReplyTarget: runtimeState.targets[0],
+            replyPolicy: "none",
           },
         });
       } catch (error) {
@@ -514,15 +582,20 @@ async function start() {
   const runtimeState = {
     targets: [],
     parsedTargets: [],
+    routingConfig: null,
   };
 
-  updateTargets(runtimeState, loadSavedTargets(baseConfig.configPath, fallbackTargets));
+  updateRoutingConfig(
+    runtimeState,
+    loadSavedRoutingConfig(baseConfig.configPath, fallbackTargets),
+  );
 
   const proxyServer = createProxyServer(runtimeState, baseConfig);
   await listenServer(proxyServer, baseConfig.listenHost, baseConfig.listenPort);
 
   console.log(
-    `TCP forwarder listening on ${baseConfig.listenHost}:${baseConfig.listenPort} -> ${runtimeState.targets.join(", ")}`,
+    `TCP forwarder listening on ${baseConfig.listenHost}:${baseConfig.listenPort} ` +
+      `with ${runtimeState.routingConfig.routes.length} route(s), replyPolicy=none`,
   );
 
   const adminServer = createAdminServer(runtimeState, baseConfig);
@@ -557,6 +630,7 @@ module.exports = {
   formatBeijingTimestamp,
   formatChunkForLog,
   listenServer,
+  loadSavedRoutingConfig,
   loadSavedTargets,
   normalizeTargets,
   parseConfigPayload,
@@ -564,9 +638,11 @@ module.exports = {
   parseTargetString,
   parseTargets,
   readStartupConfig,
+  saveRoutingConfig,
   saveTargetsConfig,
   sendLogPreview,
   shutdownServers,
   start,
+  updateRoutingConfig,
   updateTargets,
 };

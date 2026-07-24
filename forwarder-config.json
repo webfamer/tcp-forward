@@ -1,5 +1,11 @@
 {
-  "targets": [
-    "139.129.23.36:7777"
-  ]
+  "routes": [],
+  "defaultRoute": {
+    "frameType": "*",
+    "deviceAddress": "*",
+    "dataType": "*",
+    "primary": "139.129.23.36:7777",
+    "mirrors": [],
+    "replyPolicy": "none"
+  }
 }
