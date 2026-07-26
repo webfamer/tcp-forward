@@ -1,5 +1,66 @@
 {
-  "routes": [],
+  "routes": [
+    {
+      "frameType": "*",
+      "deviceAddress": "2005",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    },
+    {
+      "frameType": "*",
+      "deviceAddress": "2006",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    },
+    {
+      "frameType": "*",
+      "deviceAddress": "2007",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    },
+    {
+      "frameType": "*",
+      "deviceAddress": "2002",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    },
+    {
+      "frameType": "*",
+      "deviceAddress": "2001",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    },
+    {
+      "frameType": "*",
+      "deviceAddress": "2004",
+      "dataType": "*",
+      "primary": "123.56.152.41:7777",
+      "mirrors": [
+        "139.129.23.36:7777"
+      ],
+      "replyPolicy": "none"
+    }
+  ],
   "defaultRoute": {
     "frameType": "*",
     "deviceAddress": "*",

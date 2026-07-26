@@ -15,7 +15,6 @@ const FUSE_FRAME_LENGTH = 242;
 const COMMON_LENGTH_OFFSET = 14;
 const COMMON_HEADER_LENGTH = 16;
 const COMMON_FRAME_TAIL_LENGTH = 1;
-const SENSOR_FRAME_TAIL_LENGTH = 2;
 const IOTD_LENGTH_OFFSET = 8;
 const IOTD_HEADER_LENGTH = 10;
 const DEFAULT_MAX_FRAME_LENGTH = 8192;
@@ -123,7 +122,9 @@ class FrameRouter {
       }
 
       if (typeByte === 0x02) {
-        return COMMON_HEADER_LENGTH + dataLength + SENSOR_FRAME_TAIL_LENGTH;
+        // The DLZJ sensor length field already includes the first FC byte of
+        // its FCFC tail, so only the final FC sits outside the declared length.
+        return COMMON_HEADER_LENGTH + dataLength + COMMON_FRAME_TAIL_LENGTH;
       }
 
       return false;

@@ -20,6 +20,14 @@ function commonFrame(header, addressHex, typeHex, dataLength, tailHex = "FC") {
   return hex(`${header}${addressHex}${typeHex}0200016971EA34${lengthHex}${payload}${tailHex}`);
 }
 
+function dlzjSensorFrame(addressHex) {
+  const dataLength = 0x011b;
+  const payload = Buffer.alloc(dataLength - 1, 0x11).toString("hex");
+  const lengthHex = dataLength.toString(16).padStart(4, "0");
+
+  return hex(`${FRAME_HEADERS.DLZJ}${addressHex}020200016971EA34${lengthHex}${payload}FCFC`);
+}
+
 function fuseFrame(addressHex = "1234") {
   const frame = Buffer.alloc(242, 0);
   frame.write(FRAME_HEADERS.FUSE, 0, "hex");
@@ -52,11 +60,11 @@ test("decodes a split fixed-length fuse frame and classifies address from bytes 
 test("decodes glued DLZJ host and sensor frames using big-endian addresses and data types", () => {
   const router = createFrameRouter();
   const host = commonFrame(FRAME_HEADERS.DLZJ, "EA63", "01", 49);
-  const sensor = commonFrame(FRAME_HEADERS.DLZJ, "0039", "02", 0x011b, "FCFC");
+  const sensor = dlzjSensorFrame("0039");
   const decoded = router.push(Buffer.concat([host, sensor]));
 
   assert.equal(host.length, 66);
-  assert.equal(sensor.length, 301);
+  assert.equal(sensor.length, 300);
   assert.equal(decoded.length, 2);
   assert.deepEqual(decoded.map((entry) => entry.frame), [host, sensor]);
   assert.deepEqual(decoded.map((entry) => entry.meta), [
