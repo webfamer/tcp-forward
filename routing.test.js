@@ -136,3 +136,45 @@ test("canonicalizes target ports before building the socket lookup key", () => {
   assert.deepEqual(config.routes[0].mirrors, ["127.0.0.1:9002"]);
   assert.deepEqual(listRoutingTargets(config), ["127.0.0.1:9001", "127.0.0.1:9002"]);
 });
+
+test("preserves editable rule names without changing route matching", () => {
+  const config = normalizeRoutingConfig(
+    {
+      routes: [
+        {
+          name: "一号柜温度上报",
+          frameType: "ECCN",
+          deviceAddress: "1001",
+          dataType: "02",
+          primary: "127.0.0.1:9001",
+        },
+      ],
+    },
+    parseTargetString,
+  );
+
+  assert.equal(config.routes[0].name, "一号柜温度上报");
+  assert.equal(
+    matchRoute(config, { frameType: "ECCN", deviceAddress: "1001", dataType: "02" }).name,
+    "一号柜温度上报",
+  );
+});
+
+test("rejects empty rule names when a name is supplied", () => {
+  assert.throws(
+    () =>
+      normalizeRoutingConfig(
+        {
+          routes: [
+            {
+              name: "   ",
+              frameType: "ECCN",
+              primary: "127.0.0.1:9001",
+            },
+          ],
+        },
+        parseTargetString,
+      ),
+    /name is required/,
+  );
+});

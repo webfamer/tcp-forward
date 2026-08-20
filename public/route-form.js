@@ -34,53 +34,87 @@
   }
 
   function groupRoutes(routes) {
-    const groups = new Map();
+    const routeGroups = new Map();
 
     routes.forEach((route) => {
       const deviceType = deviceTypeForRoute(route);
       const key = JSON.stringify([
-        deviceType,
+        route.name || `__legacy__:${deviceType}`,
         route.primary,
         route.mirrors || [],
         route.replyPolicy || "none",
       ]);
-      const existing = groups.get(key);
+      let group = routeGroups.get(key);
 
-      if (existing) {
-        if (!existing.deviceAddresses.includes("*")) {
-          if (route.deviceAddress === "*") {
-            existing.deviceAddresses = ["*"];
-          } else if (!existing.deviceAddresses.includes(route.deviceAddress)) {
-            existing.deviceAddresses.push(route.deviceAddress);
-          }
-        }
-        return;
+      if (!group) {
+        group = {
+          name: route.name || "",
+          primary: route.primary || "",
+          mirrors: route.mirrors || [],
+          typeAddresses: new Map(),
+        };
+        routeGroups.set(key, group);
       }
 
-      groups.set(key, {
-        deviceType,
-        deviceAddresses: [route.deviceAddress || "*"],
-        primary: route.primary || "",
-        mirrors: route.mirrors || [],
+      const addresses = group.typeAddresses.get(deviceType) || [];
+      const address = route.deviceAddress || "*";
+      if (address === "*") {
+        group.typeAddresses.set(deviceType, ["*"]);
+      } else if (!addresses.includes("*") && !addresses.includes(address)) {
+        addresses.push(address);
+        group.typeAddresses.set(deviceType, addresses);
+      }
+    });
+
+    const rules = [];
+    routeGroups.forEach((group) => {
+      const addressGroups = new Map();
+
+      group.typeAddresses.forEach((addresses, deviceType) => {
+        const signature = JSON.stringify([...addresses].sort());
+        const existing = addressGroups.get(signature);
+        if (existing) {
+          existing.deviceTypes.push(deviceType);
+        } else {
+          addressGroups.set(signature, {
+            deviceTypes: [deviceType],
+            deviceAddresses: addresses,
+          });
+        }
+      });
+
+      addressGroups.forEach(({ deviceTypes, deviceAddresses }) => {
+        rules.push({
+          name: group.name || `规则 ${rules.length + 1}`,
+          deviceTypes,
+          deviceAddresses,
+          primary: group.primary,
+          mirrors: group.mirrors,
+        });
       });
     });
 
-    return Array.from(groups.values());
+    return rules;
   }
 
   function expandRule(rule) {
-    const match = DEVICE_TYPES[rule.deviceType];
-    if (!match) {
+    const requestedTypes = rule.deviceTypes || [rule.deviceType];
+    const deviceTypes = requestedTypes.includes("all") ? ["all"] : [...new Set(requestedTypes)];
+    if (deviceTypes.length === 0 || deviceTypes.some((deviceType) => !DEVICE_TYPES[deviceType])) {
       throw new Error("设备类型无效");
     }
 
-    return [...new Set(rule.deviceAddresses)].map((deviceAddress) => ({
-      ...match,
-      deviceAddress,
-      primary: rule.primary,
-      mirrors: rule.mirrors,
-      replyPolicy: "none",
-    }));
+    return deviceTypes.flatMap((deviceType) => {
+      const match = DEVICE_TYPES[deviceType];
+      return [...new Set(rule.deviceAddresses)].map((deviceAddress) => ({
+        ...(rule.name ? { name: rule.name } : {}),
+        ...match,
+        deviceAddress,
+        primary: rule.primary,
+        mirrors: rule.mirrors,
+        replyPolicy: "none",
+      }));
+    });
   }
 
   return {

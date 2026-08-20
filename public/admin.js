@@ -14,8 +14,15 @@ const defaultFieldsNode = document.getElementById("default-fields");
 const defaultDisabledNoteNode = document.getElementById("default-disabled-note");
 const defaultPrimaryNode = document.getElementById("default-primary");
 const defaultMirrorsNode = document.getElementById("default-mirrors");
+const logRowsNode = document.getElementById("log-rows");
+const emptyLogsNode = document.getElementById("empty-logs");
+const logSummaryNode = document.getElementById("log-summary");
+const logEventFilterNode = document.getElementById("log-event-filter");
+const refreshLogsButton = document.getElementById("refresh-logs-button");
+const logoutButton = document.getElementById("logout-button");
 const { DEVICE_TYPES, expandRule, groupRoutes } = window.RouteForm;
 let isDirty = false;
+let allLogs = [];
 
 function splitTargets(value) {
   return value
@@ -40,8 +47,48 @@ function updateEmptyState() {
   emptyRulesNode.hidden = hasRules;
   Array.from(rulesNode.children).forEach((card, index) => {
     card.querySelector(".rule-number").textContent = String(index + 1).padStart(2, "0");
-    card.querySelector(".rule-title").textContent = `规则 ${index + 1}`;
   });
+}
+
+function updateDeviceSelection(card) {
+  const summary = card.querySelector(".device-selection-summary");
+  const isFixed = card.querySelector(".address-mode").value === "fixed";
+  const addresses = isFixed ? [...new Set(splitTargets(card.querySelector(".device-address").value))] : [];
+
+  summary.replaceChildren();
+  if (!isFixed) {
+    summary.textContent = "当前选择：全部设备";
+    return;
+  }
+  if (addresses.length === 0) {
+    summary.textContent = "尚未选择设备";
+    return;
+  }
+
+  const count = document.createElement("span");
+  count.className = "selection-count";
+  count.textContent = `已选择 ${addresses.length} 台`;
+  summary.appendChild(count);
+  const isExpanded = summary.dataset.expanded === "true";
+  const visibleAddresses = isExpanded ? addresses : addresses.slice(0, 8);
+  visibleAddresses.forEach((address) => {
+    const chip = document.createElement("span");
+    chip.className = "device-chip";
+    chip.textContent = address;
+    summary.appendChild(chip);
+  });
+  if (addresses.length > 8) {
+    const expandButton = document.createElement("button");
+    expandButton.className = "device-expand-button";
+    expandButton.type = "button";
+    expandButton.textContent = isExpanded ? "收起" : `展开其余 ${addresses.length - 8} 台`;
+    expandButton.setAttribute("aria-expanded", String(isExpanded));
+    expandButton.addEventListener("click", () => {
+      summary.dataset.expanded = String(!isExpanded);
+      updateDeviceSelection(card);
+    });
+    summary.appendChild(expandButton);
+  }
 }
 
 function updateAddressField(card) {
@@ -50,6 +97,7 @@ function updateAddressField(card) {
   addressInput.disabled = !isFixed;
   addressInput.required = isFixed;
   card.querySelector(".address-field").classList.toggle("muted", !isFixed);
+  updateDeviceSelection(card);
 }
 
 function validateTarget(target, fieldName) {
@@ -70,15 +118,33 @@ function validateTarget(target, fieldName) {
 function createRuleCard(rule = {}) {
   const card = ruleTemplate.content.firstElementChild.cloneNode(true);
   const addressMode = card.querySelector(".address-mode");
+  const ruleName = card.querySelector(".rule-name");
   const deviceAddress = card.querySelector(".device-address");
-  const deviceType = card.querySelector(".device-type");
+  const deviceTypeInputs = Array.from(card.querySelectorAll(".device-type-option input"));
   const primary = card.querySelector(".primary-target");
   const mirrors = card.querySelector(".mirror-targets");
   const addresses = rule.deviceAddresses || ["*"];
 
+  ruleName.value = rule.name || "";
   addressMode.value = addresses.includes("*") ? "*" : "fixed";
   deviceAddress.value = addresses.includes("*") ? "" : addresses.join("\n");
-  deviceType.value = rule.deviceType || "all";
+  const selectedDeviceTypes = rule.deviceTypes || [rule.deviceType || "all"];
+  deviceTypeInputs.forEach((input) => {
+    input.checked = selectedDeviceTypes.includes(input.value);
+    input.addEventListener("change", () => {
+      if (!input.checked) {
+        return;
+      }
+      if (input.value === "all") {
+        deviceTypeInputs.forEach((other) => {
+          other.checked = other === input;
+        });
+      } else {
+        const allInput = deviceTypeInputs.find((other) => other.value === "all");
+        allInput.checked = false;
+      }
+    });
+  });
   primary.value = rule.primary || "";
   mirrors.value = Array.isArray(rule.mirrors) ? rule.mirrors.join("\n") : "";
 
@@ -86,6 +152,7 @@ function createRuleCard(rule = {}) {
     updateAddressField(card);
     markDirty();
   });
+  deviceAddress.addEventListener("input", () => updateDeviceSelection(card));
   card.querySelector(".remove-rule").addEventListener("click", () => {
     if (!window.confirm("确定删除这条转发规则吗？")) {
       return;
@@ -150,14 +217,20 @@ function renderConfig(config) {
 function readRules() {
   return Array.from(rulesNode.children).flatMap((card, index) => {
     const addressMode = card.querySelector(".address-mode").value;
+    const name = card.querySelector(".rule-name").value.trim();
     const deviceAddresses =
       addressMode === "fixed"
         ? [...new Set(splitTargets(card.querySelector(".device-address").value))]
         : ["*"];
     const primary = card.querySelector(".primary-target").value.trim();
-    const deviceType = card.querySelector(".device-type").value;
+    const deviceTypes = Array.from(card.querySelectorAll(".device-type-option input:checked")).map(
+      (input) => input.value,
+    );
     const mirrors = splitTargets(card.querySelector(".mirror-targets").value);
 
+    if (!name) {
+      throw new Error(`规则 ${index + 1}：请填写规则名称`);
+    }
     if (addressMode === "fixed" && deviceAddresses.length === 0) {
       throw new Error(`规则 ${index + 1}：请至少填写一个设备地址`);
     }
@@ -168,7 +241,10 @@ function readRules() {
     if (!primary) {
       throw new Error(`规则 ${index + 1}：请填写主目标`);
     }
-    if (!DEVICE_TYPES[deviceType]) {
+    if (deviceTypes.length === 0) {
+      throw new Error(`规则 ${index + 1}：请至少选择一个设备类型`);
+    }
+    if (deviceTypes.some((deviceType) => !DEVICE_TYPES[deviceType])) {
       throw new Error(`规则 ${index + 1}：设备类型无效`);
     }
     validateTarget(primary, `规则 ${index + 1} 的主目标`);
@@ -180,12 +256,76 @@ function readRules() {
     }
 
     return expandRule({
-      deviceType,
+      name,
+      deviceTypes,
       deviceAddresses,
       primary,
       mirrors,
     });
   });
+}
+
+const LOG_EVENT_LABELS = {
+  "frame-route": "报文路由",
+  "client-data": "设备数据",
+  "upstream-reply-dropped": "回包丢弃",
+  other: "其他",
+};
+
+function renderLogs() {
+  const filter = logEventFilterNode.value;
+  const logs = filter === "all" ? allLogs : allLogs.filter((log) => log.event === filter);
+  logRowsNode.replaceChildren();
+
+  logs.forEach((log) => {
+    const row = document.createElement("tr");
+    const timeCell = document.createElement("td");
+    const eventCell = document.createElement("td");
+    const messageCell = document.createElement("td");
+    const messageText = document.createElement("div");
+    timeCell.textContent = log.timestamp ? log.timestamp.replace("T", " ") : "-";
+    eventCell.textContent = LOG_EVENT_LABELS[log.event] || log.event;
+    eventCell.dataset.event = log.event;
+    messageText.className = "log-message";
+    messageText.textContent = log.message;
+    messageCell.appendChild(messageText);
+
+    if (log.message.length > 120) {
+      const expandButton = document.createElement("button");
+      expandButton.className = "log-expand-button";
+      expandButton.type = "button";
+      expandButton.textContent = "展开完整内容";
+      expandButton.setAttribute("aria-expanded", "false");
+      expandButton.addEventListener("click", () => {
+        const isExpanded = messageCell.classList.toggle("expanded");
+        expandButton.textContent = isExpanded ? "收起" : "展开完整内容";
+        expandButton.setAttribute("aria-expanded", String(isExpanded));
+      });
+      messageCell.appendChild(expandButton);
+    }
+    row.append(timeCell, eventCell, messageCell);
+    logRowsNode.appendChild(row);
+  });
+
+  emptyLogsNode.hidden = logs.length > 0;
+  logSummaryNode.textContent = `显示 ${logs.length} 条，日志按时间倒序排列`;
+}
+
+async function loadLogs() {
+  refreshLogsButton.disabled = true;
+  try {
+    const response = await fetch("/api/logs?limit=200", { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "加载日志失败");
+    }
+    allLogs = payload.logs;
+    renderLogs();
+  } catch (error) {
+    logSummaryNode.textContent = error.message;
+  } finally {
+    refreshLogsButton.disabled = false;
+  }
 }
 
 function readConfig() {
@@ -245,7 +385,8 @@ async function loadPage() {
 
 addRuleButton.addEventListener("click", () => {
   addRule({
-    deviceType: "all",
+    name: `规则 ${rulesNode.children.length + 1}`,
+    deviceTypes: ["all"],
     deviceAddresses: ["*"],
     primary: "",
     mirrors: [],
@@ -258,6 +399,14 @@ defaultEnabledNode.addEventListener("change", () => {
   markDirty();
 });
 defaultFieldsNode.addEventListener("input", markDirty);
+refreshLogsButton.addEventListener("click", loadLogs);
+logEventFilterNode.addEventListener("change", renderLogs);
+logoutButton.addEventListener("click", () => {
+  ["login", "APP_TOKEN", "APP_USER", "APP_PERMISSIONS"].forEach((key) =>
+    localStorage.removeItem(key),
+  );
+  window.location.replace("/login.html");
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -289,3 +438,9 @@ loadPage().catch((error) => {
   setStatus("error", error.message);
   saveButton.disabled = false;
 });
+loadLogs();
+setInterval(() => {
+  if (!document.hidden) {
+    loadLogs();
+  }
+}, 5000);

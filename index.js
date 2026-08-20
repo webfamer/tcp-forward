@@ -23,6 +23,22 @@ const STATIC_FILES = {
     filePath: path.join(PUBLIC_DIR, "route-form.js"),
     contentType: "application/javascript; charset=utf-8",
   },
+  "/auth.js": {
+    filePath: path.join(PUBLIC_DIR, "auth.js"),
+    contentType: "application/javascript; charset=utf-8",
+  },
+  "/login.html": {
+    filePath: path.join(PUBLIC_DIR, "login.html"),
+    contentType: "text/html; charset=utf-8",
+  },
+  "/login.css": {
+    filePath: path.join(PUBLIC_DIR, "login.css"),
+    contentType: "text/css; charset=utf-8",
+  },
+  "/login.js": {
+    filePath: path.join(PUBLIC_DIR, "login.js"),
+    contentType: "application/javascript; charset=utf-8",
+  },
 };
 const LOG_PREVIEW_ROUTES = new Set(["/static.txt", "/staic.txt"]);
 
@@ -212,6 +228,50 @@ function formatChunkForLog(chunk) {
 function appendForwardLog(logPath, message) {
   fs.mkdirSync(path.dirname(logPath), { recursive: true });
   fs.appendFileSync(logPath, `${message}\n`, "utf8");
+}
+
+function readForwardLogs(logPath, limit = 100) {
+  const safeLimit = Math.max(1, Math.min(Number.parseInt(limit, 10) || 100, 500));
+
+  try {
+    const stats = fs.statSync(logPath);
+    const maxBytes = 256 * 1024;
+    const start = Math.max(0, stats.size - maxBytes);
+    const length = stats.size - start;
+    const buffer = Buffer.alloc(length);
+    const descriptor = fs.openSync(logPath, "r");
+
+    try {
+      fs.readSync(descriptor, buffer, 0, length, start);
+    } finally {
+      fs.closeSync(descriptor);
+    }
+
+    let content = buffer.toString("utf8");
+    if (start > 0) {
+      content = content.slice(content.indexOf("\n") + 1);
+    }
+
+    return content
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .slice(-safeLimit)
+      .reverse()
+      .map((raw) => {
+        const match = raw.match(/^\[([^\]]+)] \[([^\]]+)]\s*(.*)$/);
+        return {
+          timestamp: match?.[1] || "",
+          event: match?.[2] || "other",
+          message: match?.[3] || raw,
+          raw,
+        };
+      });
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
 }
 
 function readRequestBody(request) {
@@ -405,6 +465,7 @@ function createProxyServer(runtimeState, baseConfig) {
         const destinations = routeDestinations(route);
         const routeLogLine =
           `[${formatBeijingTimestamp()}+08:00] [frame-route] ` +
+          `rule=${JSON.stringify(route?.name || (route ? "未命名规则" : "未匹配"))} ` +
           `type=${meta.frameType} address=${meta.deviceAddress} dataType=${meta.dataType} ` +
           `targets=${destinations.join(", ") || "[drop]"} ${frame.length}B`;
 
@@ -535,6 +596,17 @@ function createAdminServer(runtimeState, baseConfig) {
       return;
     }
 
+    if (url.pathname === "/api/logs" && request.method === "GET") {
+      try {
+        sendJson(response, 200, {
+          logs: readForwardLogs(baseConfig.logPath || DEFAULT_LOG_PATH, url.searchParams.get("limit")),
+        });
+      } catch (error) {
+        sendJson(response, 500, { error: `Failed to read forward logs: ${error.message}` });
+      }
+      return;
+    }
+
     if (url.pathname === "/api/config" && request.method === "POST") {
       try {
         const body = await readRequestBody(request);
@@ -637,6 +709,7 @@ module.exports = {
   parseInteger,
   parseTargetString,
   parseTargets,
+  readForwardLogs,
   readStartupConfig,
   saveRoutingConfig,
   saveTargetsConfig,

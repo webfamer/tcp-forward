@@ -23,6 +23,22 @@ function normalizeDestination(destination, fieldName) {
   return normalized;
 }
 
+function normalizeRouteName(name, index) {
+  if (name === undefined || name === null) {
+    return null;
+  }
+
+  const normalized = String(name).trim();
+  if (!normalized) {
+    throw new Error(`route ${index + 1} name is required`);
+  }
+  if (normalized.length > 80) {
+    throw new Error(`route ${index + 1} name must be at most 80 characters`);
+  }
+
+  return normalized;
+}
+
 function normalizeRoute(route, index, parseTargetString) {
   if (!route || typeof route !== "object" || Array.isArray(route)) {
     throw new Error(`route ${index + 1} must be an object`);
@@ -31,6 +47,7 @@ function normalizeRoute(route, index, parseTargetString) {
   const frameType = normalizeMatcherValue(route.frameType, `route ${index + 1} frameType`, {
     uppercase: true,
   });
+  const name = normalizeRouteName(route.name, index);
   if (!FRAME_TYPES.has(frameType)) {
     throw new Error(`route ${index + 1} frameType is not supported`);
   }
@@ -62,6 +79,7 @@ function normalizeRoute(route, index, parseTargetString) {
   }
 
   return {
+    ...(name ? { name } : {}),
     frameType,
     deviceAddress,
     dataType,

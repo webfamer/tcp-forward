@@ -116,6 +116,22 @@ h2 {
   box-shadow: 0 0 0 5px rgba(24, 166, 111, 0.12);
 }
 
+.logout-button {
+  min-height: 32px;
+  margin-left: 3px;
+  padding: 0 9px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.logout-button:hover {
+  color: var(--orange);
+}
+
 .telemetry {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)) 1.8fr;
@@ -214,6 +230,35 @@ h2 {
   background: #ebe6da;
 }
 
+.rule-identity {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.rule-name-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.rule-name-field > span {
+  flex: 0 0 auto;
+}
+
+.rule-name-field input {
+  width: min(420px, 100%);
+  height: 36px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.72);
+  font-weight: 700;
+}
+
 .rule-number {
   display: inline-grid;
   place-items: center;
@@ -240,7 +285,7 @@ h2 {
 }
 
 .match-grid {
-  grid-template-columns: 0.8fr 1.5fr 1.2fr;
+  grid-template-columns: 0.8fr 1.35fr 1.65fr;
 }
 
 .field {
@@ -250,15 +295,76 @@ h2 {
   min-width: 0;
 }
 
-.field > span {
+.field > span,
+.field > legend {
   color: #3f4945;
   font-size: 12px;
   font-weight: 750;
 }
 
+.field > legend {
+  margin-bottom: 7px;
+  padding: 0;
+}
+
 .field small {
   color: var(--muted);
   font-weight: 500;
+}
+
+.device-type-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.device-type-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.device-type-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: #f2efe8;
+  box-shadow: 0 0 0 1px rgba(23, 32, 29, 0.09);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.3;
+  transition-property: background, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: ease-out;
+}
+
+.device-type-option:hover {
+  background: #e9f1ed;
+  box-shadow: 0 0 0 1px rgba(13, 107, 79, 0.25);
+}
+
+.device-type-option:has(input:checked) {
+  background: #e1f0ea;
+  box-shadow: 0 0 0 1px var(--green);
+  color: var(--green-dark);
+}
+
+.device-type-option input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--green);
+}
+
+.device-type-option:has(input:focus-visible) {
+  box-shadow: 0 0 0 3px rgba(13, 107, 79, 0.18);
 }
 
 .field em {
@@ -310,6 +416,56 @@ input:disabled {
 
 .address-field.muted > span {
   color: #999f9c;
+}
+
+.device-selection-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 22px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.selection-count,
+.device-chip {
+  padding: 3px 7px;
+  border-radius: 999px;
+}
+
+.device-expand-button {
+  min-height: 40px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.device-expand-button:hover {
+  color: var(--green-dark);
+  text-decoration: underline;
+}
+
+.device-expand-button:focus-visible {
+  border-radius: 5px;
+  outline: 3px solid rgba(13, 107, 79, 0.2);
+  outline-offset: 1px;
+}
+
+.selection-count {
+  background: var(--green);
+  color: white;
+  font-weight: 750;
+}
+
+.device-chip {
+  border: 1px solid #c9d8d2;
+  background: #edf5f2;
+  color: var(--green-dark);
+  font-family: "SFMono-Regular", Consolas, monospace;
 }
 
 .route-arrow {
@@ -517,6 +673,131 @@ input:disabled {
   color: #b63c21;
 }
 
+.logs-panel {
+  margin-top: 18px;
+}
+
+.log-controls {
+  display: flex;
+  align-items: end;
+  gap: 10px;
+}
+
+.compact-field {
+  min-width: 170px;
+}
+
+.log-summary {
+  padding: 14px 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.log-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.log-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 12px;
+}
+
+.log-table th,
+.log-table td {
+  padding: 11px 13px;
+  border-bottom: 1px solid #ebe7de;
+  text-align: left;
+  vertical-align: top;
+}
+
+.log-table th {
+  background: #ebe6da;
+  color: #4d5753;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.log-table th:first-child,
+.log-table td:first-child {
+  width: 190px;
+  white-space: nowrap;
+}
+
+.log-table th:nth-child(2),
+.log-table td:nth-child(2) {
+  width: 110px;
+  white-space: nowrap;
+}
+
+.log-table td:last-child {
+  min-width: 320px;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  line-height: 1.55;
+}
+
+.log-message {
+  display: -webkit-box;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.log-table td.expanded .log-message {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: initial;
+}
+
+.log-expand-button {
+  min-width: 40px;
+  min-height: 40px;
+  margin: 4px 0 -8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.log-expand-button:hover {
+  color: var(--green-dark);
+  text-decoration: underline;
+}
+
+.log-expand-button:focus-visible {
+  border-radius: 5px;
+  outline: 3px solid rgba(13, 107, 79, 0.2);
+  outline-offset: 2px;
+}
+
+.log-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.log-table td[data-event="frame-route"] {
+  color: var(--green);
+  font-weight: 750;
+}
+
+.log-table td[data-event="upstream-reply-dropped"] {
+  color: var(--orange);
+  font-weight: 750;
+}
+
+.compact-empty {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
 [hidden] {
   display: none !important;
 }
@@ -536,6 +817,12 @@ input:disabled {
 
   .match-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .log-controls {
+    align-items: stretch;
+    flex-direction: column;
+    width: 100%;
   }
 }
 
@@ -587,5 +874,16 @@ input:disabled {
 
   .status {
     text-align: left;
+  }
+
+  .rule-header,
+  .rule-identity {
+    align-items: flex-start;
+  }
+
+  .rule-name-field {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 4px;
   }
 }

@@ -9,6 +9,7 @@ const {
   closeServer,
   createAdminServer,
   createProxyServer,
+  readForwardLogs,
   readStartupConfig,
   updateRoutingConfig,
   updateTargets,
@@ -52,24 +53,69 @@ test("serves simplified admin frontend assets", async () => {
   try {
     const page = await fetch(`http://127.0.0.1:${port}/`).then((response) => response.text());
     const script = await fetch(`http://127.0.0.1:${port}/admin.js`).then((response) => response.text());
+    const loginPage = await fetch(`http://127.0.0.1:${port}/login.html`).then((response) =>
+      response.text(),
+    );
+    const loginScript = await fetch(`http://127.0.0.1:${port}/login.js`).then((response) =>
+      response.text(),
+    );
+    const authScript = await fetch(`http://127.0.0.1:${port}/auth.js`).then((response) =>
+      response.text(),
+    );
     const staticLogResponse = await fetch(`http://127.0.0.1:${port}/static.txt`);
     const staticLog = await staticLogResponse.text();
     const typoLogResponse = await fetch(`http://127.0.0.1:${port}/staic.txt`);
     const typoLog = await typoLogResponse.text();
+    const logsResponse = await fetch(`http://127.0.0.1:${port}/api/logs?limit=20`);
+    const logsPayload = await logsResponse.json();
 
     assert.match(page, /报文转发规则/);
     assert.match(page, /新增规则/);
+    assert.match(page, /规则名称/);
+    assert.match(page, /转发日志/);
+    assert.match(page, /auth\.js/);
+    assert.match(page, /退出/);
+    assert.match(loginPage, /管理员登录/);
+    assert.match(loginPage, /美卓平台账号/);
+    assert.match(loginScript, /platform\.mzpower\.com\/api\/account\/login/);
+    assert.match(loginScript, /localStorage\.setItem\("login", "true"\)/);
+    assert.match(authScript, /localStorage\.getItem\("APP_TOKEN"\)/);
     assert.match(page, /固定设备地址/);
     assert.match(page, /五路测温传感器/);
     assert.match(page, /多个用逗号或换行分隔/);
     assert.match(page, /启用全量转发/);
     assert.match(script, /createRuleCard/);
+    assert.match(script, /展开完整内容/);
+    assert.match(script, /展开其余/);
     assert.match(script, /replyPolicy: "none"/);
     assert.match(staticLogResponse.headers.get("content-type") || "", /^text\/html/);
     assert.match(staticLog, /<pre>log line 1\n<\/pre>/);
     assert.match(typoLog, /<pre>log line 1\n<\/pre>/);
+    assert.equal(logsResponse.status, 200);
+    assert.deepEqual(logsPayload.logs, [
+      { timestamp: "", event: "other", message: "log line 1", raw: "log line 1" },
+    ]);
   } finally {
     await closeServer(server);
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("reads recent structured forward logs in newest-first order", () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tcp-forward-read-log-test-"));
+  const logPath = path.join(tempDir, "forward.log");
+  fs.writeFileSync(
+    logPath,
+    "[2026-08-20T10:00:00+08:00] [frame-route] rule=温度规则 type=ECCN address=1001 targets=127.0.0.1:9001 17B\n" +
+      "[2026-08-20T10:00:01+08:00] [upstream-reply-dropped] target=127.0.0.1:9001 4B\n",
+  );
+
+  try {
+    const logs = readForwardLogs(logPath, 1);
+    assert.equal(logs.length, 1);
+    assert.equal(logs[0].timestamp, "2026-08-20T10:00:01+08:00");
+    assert.equal(logs[0].event, "upstream-reply-dropped");
+  } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -180,6 +226,7 @@ test("routes glued frames by address and drops upstream replies", async () => {
   updateRoutingConfig(runtimeState, {
     routes: [
       {
+        name: "1001 温度上报",
         frameType: "ECCN",
         deviceAddress: "1001",
         dataType: "02",
@@ -232,6 +279,7 @@ test("routes glued frames by address and drops upstream replies", async () => {
       new RegExp(`targets=127\\.0\\.0\\.1:${upstreamPorts[0]}, 127\\.0\\.0\\.1:${upstreamPorts[1]}`),
     );
     assert.match(logContents, /type=ECCN address=1001 dataType=02/);
+    assert.match(logContents, /rule="1001 温度上报"/);
     assert.match(logContents, /type=ECCN address=1002 dataType=02/);
     assert.match(logContents, /upstream-reply-dropped/);
   } finally {
